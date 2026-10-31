@@ -180,24 +180,24 @@ if (typeof L === "undefined") {
 const map = L.map("map", { zoomControl: false }).setView([37.5665, 126.978], 12);
 L.control.zoom({ position: "topright" }).addTo(map);
 
-const tileA = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-  maxZoom: 19, subdomains: "abcd",
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+/* 지도 타일: OpenStreetMap(키 불필요) 우선, 실패 시 Esri로 자동 전환.
+   (CARTO 지도는 2026년 8월부터 API 키가 없으면 "API KEY REQUIRED" 워터마크가 찍혀서 사용하지 않습니다.) */
+const tileA = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 }).addTo(map);
-let tileErrors = 0, tileOk = 0, switched = false;
-const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+const osm = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+  maxZoom: 19, attribution: "Tiles &copy; Esri"
 });
-let osmErrors = 0;
-osm.on("tileerror", () => { if (++osmErrors === 4) banner("지도 이미지를 불러오지 못했습니다. 이 브라우저나 네트워크에서 지도 서버 접속이 막혀 있을 수 있습니다. Safari/Chrome에서 직접 열어 보세요."); });
+let tileErrors = 0, tileOk = 0, switched = false, osmErrors = 0;
+osm.on("tileerror", () => { if (++osmErrors === 4) banner("지도 이미지를 불러오지 못했습니다. 이 브라우저나 네트워크에서 지도 서버 접속이 막혀 있을 수 있습니다."); });
 tileA.on("tileload", () => { tileOk++; $("mapstate").style.display = "none"; });
 osm.on("tileload", () => { $("mapstate").style.display = "none"; });
-setTimeout(() => { if (tileOk === 0 && !switched) $("mapstate").textContent = "지도 이미지 로딩이 지연되고 있습니다…"; }, 8000);
 tileA.on("tileerror", () => {
   if (++tileErrors >= 4 && tileOk === 0 && !switched) {
     switched = true; map.removeLayer(tileA); osm.addTo(map);
   }
 });
+setTimeout(() => { if (tileOk === 0 && !switched) $("mapstate").textContent = "지도 이미지 로딩이 지연되고 있습니다…"; }, 8000);
 if (getComputedStyle(document.querySelector(".leaflet-pane")).position !== "absolute") {
   banner("지도 스타일 파일을 불러오지 못했습니다. 새로고침하거나 다른 브라우저에서 열어 보세요.");
 }
