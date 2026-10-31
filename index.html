@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#243b53">
 <title>위치 기록</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <style>
 :root{
   --ink:#1f2933; --sub:#616e7c; --line:#d9dee3; --bg:#ffffff; --soft:#f3f5f7;
@@ -60,6 +59,11 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 
 #toast{position:fixed;z-index:900;left:50%;top:calc(env(safe-area-inset-top,0px) + 54px);transform:translate(-50%,-10px);background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;font-size:13.5px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;max-width:90vw;text-align:center}
 #toast.show{opacity:1;transform:translate(-50%,0)}
+.leaflet-top{top:env(safe-area-inset-top,0px)}
+#locate{position:fixed;z-index:550;right:10px;top:calc(env(safe-area-inset-top,0px) + 84px);width:40px;height:40px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--navy);display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 1px 5px rgba(31,41,51,.3);padding:0}
+#locate:active{background:var(--soft)}
+#locate.busy{opacity:.55;pointer-events:none}
+#locate svg{width:22px;height:22px}
 @media (prefers-reduced-motion:reduce){.me{animation:none}}
 </style>
 </head>
@@ -73,6 +77,9 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
   <span class="chip" id="mode">로컬 저장</span>
 </div>
 <div id="banner"></div>
+<button id="locate" aria-label="내 위치 찾기" title="내 위치 찾기">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4"/></svg>
+</button>
 
 <div id="sheet">
   <div id="tags"></div>
@@ -91,7 +98,6 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 
 <div id="toast"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script type="module">
 /* ========================================================
    Firebase 콘솔의 설정값을 아래에 붙여넣으세요.
@@ -128,8 +134,32 @@ function toast(msg) {
 }
 
 /* ---------- 1. 지도를 가장 먼저 만든다 (Firebase와 무관하게 표시) ---------- */
+function loadCSS(href) {
+  return new Promise(res => {
+    const l = document.createElement("link"); l.rel = "stylesheet"; l.href = href;
+    l.onload = () => res(true); l.onerror = () => res(false);
+    document.head.appendChild(l); setTimeout(() => res(false), 6000);
+  });
+}
+function loadJS(src) {
+  return new Promise(res => {
+    const sc = document.createElement("script"); sc.src = src;
+    sc.onload = () => res(true); sc.onerror = () => res(false);
+    document.head.appendChild(sc); setTimeout(() => res(false), 8000);
+  });
+}
+const CDNS = [
+  ["https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css", "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"],
+  ["https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css", "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"],
+  ["https://unpkg.com/leaflet@1.9.4/dist/leaflet.css", "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"]
+];
+for (const [css, js] of CDNS) {
+  if (typeof L !== "undefined") break;
+  await loadCSS(css);
+  await loadJS(js);
+}
 if (typeof L === "undefined") {
-  banner("지도 라이브러리를 불러오지 못했습니다. 네트워크 연결을 확인한 뒤 새로고침하세요.");
+  banner("지도 라이브러리를 불러오지 못했습니다. 네트워크 연결이나 차단 설정을 확인한 뒤 새로고침하세요.");
   throw new Error("Leaflet not loaded");
 }
 const map = L.map("map", { zoomControl: false }).setView([37.5665, 126.978], 12);
@@ -139,20 +169,33 @@ const tileA = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{
   maxZoom: 19, subdomains: "abcd",
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
 }).addTo(map);
-let tileErrors = 0, switched = false;
+let tileErrors = 0, tileOk = 0, switched = false;
+const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+});
+let osmErrors = 0;
+osm.on("tileerror", () => { if (++osmErrors === 4) banner("지도 이미지를 불러오지 못했습니다. 이 브라우저나 네트워크에서 지도 서버 접속이 막혀 있을 수 있습니다. Safari/Chrome에서 직접 열어 보세요."); });
+tileA.on("tileload", () => { tileOk++; });
 tileA.on("tileerror", () => {
-  if (++tileErrors >= 4 && !switched) {
-    switched = true; map.removeLayer(tileA);
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map);
+  if (++tileErrors >= 4 && tileOk === 0 && !switched) {
+    switched = true; map.removeLayer(tileA); osm.addTo(map);
   }
 });
+if (getComputedStyle(document.querySelector(".leaflet-pane")).position !== "absolute") {
+  banner("지도 스타일 파일을 불러오지 못했습니다. 새로고침하거나 다른 브라우저에서 열어 보세요.");
+}
 setTimeout(() => map.invalidateSize(), 300);
 window.addEventListener("resize", () => map.invalidateSize());
 
 const layer = L.layerGroup().addTo(map);
-let meMarker = null;
+let meMarker = null, meCircle = null;
+function setMe(lat, lng, acc) {
+  const ll = [lat, lng], r = Math.max(acc || 0, 5);
+  if (meMarker) meMarker.setLatLng(ll);
+  else meMarker = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [16, 16] }), interactive: false, zIndexOffset: -100 }).addTo(map);
+  if (meCircle) meCircle.setLatLng(ll).setRadius(r);
+  else meCircle = L.circle(ll, { radius: r, color: "#2b6cb0", weight: 1, fillOpacity: .1, interactive: false }).addTo(map);
+}
 
 /* ---------- 2. 저장소 (Firebase 실패 시 로컬로 자동 전환) ---------- */
 function localStore() {
@@ -314,8 +357,7 @@ $("stamp").addEventListener("click", () => {
       toast("기록됨 · " + fmt(rec.t));
       if (filterDay && filterDay !== dayKey(rec.t)) setFilter(null);
       map.flyTo([rec.lat, rec.lng], Math.max(map.getZoom(), 16), { duration: .8 });
-      if (meMarker) meMarker.setLatLng([rec.lat, rec.lng]);
-      else meMarker = L.marker([rec.lat, rec.lng], { icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [16, 16] }), interactive: false, zIndexOffset: -100 }).addTo(map);
+      setMe(rec.lat, rec.lng, rec.acc);
     } catch (e) {
       toast("저장 실패: " + (e.code || e.message));
     }
@@ -326,6 +368,23 @@ $("stamp").addEventListener("click", () => {
         : "위치를 확인할 수 없습니다.");
     done();
   }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+});
+
+/* ---------- 내 위치 찾기 (기록하지 않고 지도만 이동) ---------- */
+$("locate").addEventListener("click", () => {
+  if (!navigator.geolocation) return toast("이 브라우저는 위치 기능을 지원하지 않습니다");
+  if (!window.isSecureContext) return toast("위치 기능은 https 주소에서만 사용할 수 있습니다");
+  const btn = $("locate"); btn.classList.add("busy");
+  navigator.geolocation.getCurrentPosition(pos => {
+    setMe(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+    map.flyTo([pos.coords.latitude, pos.coords.longitude], Math.max(map.getZoom(), 16), { duration: .8 });
+    btn.classList.remove("busy");
+  }, err => {
+    toast(err.code === 1 ? "위치 권한이 필요합니다. 브라우저 설정에서 허용해 주세요."
+        : err.code === 3 ? "위치 확인 시간이 초과되었습니다. 다시 시도해 주세요."
+        : "위치를 확인할 수 없습니다.");
+    btn.classList.remove("busy");
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
 });
 
 /* ---------- 필터 / 재생 / 목록 ---------- */
