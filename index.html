@@ -12,7 +12,8 @@
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Segoe UI",sans-serif;color:var(--ink);overscroll-behavior:none;background:#e5e9ed}
-#map{position:fixed;inset:0;z-index:0;background:#e5e9ed}
+#map{position:fixed;top:0;left:0;right:0;bottom:0;z-index:0;background:#e5e9ed}
+#mapstate{position:fixed;z-index:1;left:0;right:0;top:38%;text-align:center;font-size:14px;color:var(--sub);pointer-events:none;padding:0 24px}
 
 #top{position:fixed;z-index:500;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 10px) 12px 0;pointer-events:none;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 #top h1{margin:0 4px 0 0;font-size:15px;font-weight:700;letter-spacing:-.01em;background:var(--navy);color:#fff;padding:7px 12px;border-radius:8px}
@@ -69,6 +70,7 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 </head>
 <body>
 <div id="map"></div>
+<div id="mapstate">지도를 불러오는 중…</div>
 
 <div id="top">
   <h1>위치 기록</h1>
@@ -98,7 +100,20 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 
 <div id="toast"></div>
 
-<script type="module">
+<script>
+window.addEventListener("error", function (e) {
+  if (e.target && e.target !== window) return; /* 이미지·스크립트 로딩 실패는 무시 (다른 서버로 자동 재시도) */
+  var b = document.getElementById("banner"); if (!b) return;
+  b.textContent = "오류: " + (e.message || e.type) + (e.filename ? " (" + e.filename.split("/").pop() + ":" + e.lineno + ")" : "");
+  b.style.display = "block";
+});
+window.addEventListener("unhandledrejection", function (e) {
+  var b = document.getElementById("banner"); if (!b) return;
+  b.textContent = "오류: " + ((e.reason && (e.reason.message || e.reason)) || "알 수 없음"); b.style.display = "block";
+});
+</script>
+<script>
+(async () => {
 /* ========================================================
    Firebase 콘솔의 설정값을 아래에 붙여넣으세요.
    (프로젝트 설정 → 일반 → 내 앱 → 웹 앱 → SDK 설정 및 구성)
@@ -175,7 +190,9 @@ const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 });
 let osmErrors = 0;
 osm.on("tileerror", () => { if (++osmErrors === 4) banner("지도 이미지를 불러오지 못했습니다. 이 브라우저나 네트워크에서 지도 서버 접속이 막혀 있을 수 있습니다. Safari/Chrome에서 직접 열어 보세요."); });
-tileA.on("tileload", () => { tileOk++; });
+tileA.on("tileload", () => { tileOk++; $("mapstate").style.display = "none"; });
+osm.on("tileload", () => { $("mapstate").style.display = "none"; });
+setTimeout(() => { if (tileOk === 0 && !switched) $("mapstate").textContent = "지도 이미지 로딩이 지연되고 있습니다…"; }, 8000);
 tileA.on("tileerror", () => {
   if (++tileErrors >= 4 && tileOk === 0 && !switched) {
     switched = true; map.removeLayer(tileA); osm.addTo(map);
@@ -420,6 +437,7 @@ store.watch(list => {
   render(firstFit);
   if (list.length) firstFit = false;
 });
+})();
 </script>
 </body>
 </html>
