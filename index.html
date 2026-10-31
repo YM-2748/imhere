@@ -35,10 +35,15 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 #stamp:active{transform:scale(.99);background:var(--navy-d)}
 #stamp.busy{opacity:.7;pointer-events:none}
 
-#bar{display:flex;gap:6px;margin-top:10px;align-items:center}
+#bar{margin-top:6px}
+.row{display:flex;gap:6px;margin-top:8px;align-items:center}
+.row .tilde{color:var(--sub);font-size:13px}
 #bar button,#bar input{font-family:inherit;font-size:13.5px;font-weight:600;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;padding:8px 10px;cursor:pointer}
-#bar button.p{background:var(--soft)}
+#bar button{flex:1}
+#bar button.p{background:var(--navy);border-color:var(--navy);color:#fff}
+#bar button.on{background:var(--soft);border-color:var(--navy)}
 #bar input{flex:1;min-width:0;cursor:text}
+#bar .row input{padding:8px 6px;font-size:14px}
 
 #list{margin:8px 0 0;padding:0;list-style:none;max-height:0;overflow:auto;transition:max-height .25s ease}
 #sheet.open #list{max-height:32vh}
@@ -89,10 +94,21 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
   <button id="stamp">현재 위치 기록</button>
 
   <div id="bar">
-    <button id="bList">목록 보기</button>
-    <input id="date" type="date" aria-label="날짜 선택">
-    <button id="bAll">전체 기간</button>
-    <button id="bPlay" class="p">경로 재생</button>
+    <div class="row">
+      <button id="bList">목록 보기</button>
+      <button id="bPlay" class="p">경로 재생</button>
+    </div>
+    <div class="row">
+      <input id="dFrom" type="date" aria-label="시작일">
+      <span class="tilde">~</span>
+      <input id="dTo" type="date" aria-label="종료일">
+    </div>
+    <div class="row" id="presets">
+      <button data-d="0">오늘</button>
+      <button data-d="6">최근 7일</button>
+      <button data-d="29">최근 30일</button>
+      <button data-d="all">전체 기간</button>
+    </div>
   </div>
   <ul id="list"></ul>
   <div id="empty">기록이 없습니다. 위 버튼을 눌러 현재 위치를 기록하세요.</div>
@@ -132,10 +148,8 @@ const firebaseConfig = {
 const COLLECTION = "footprints";
 const TAGS = [
   { name: "일반", color: "#334e68" },
-  { name: "이동", color: "#2f6f73" },
-  { name: "식사", color: "#8a6d3b" },
   { name: "업무", color: "#5b4b8a" },
-  { name: "휴식", color: "#4f7a5a" }
+  { name: "식사", color: "#8a6d3b" }
 ];
 const tagColor = n => (TAGS.find(t => t.name === n) || TAGS[0]).color;
 const $ = id => document.getElementById(id);
@@ -267,7 +281,7 @@ if (firebaseConfig.apiKey.startsWith("YOUR")) {
 
 /* ---------- 상태 ---------- */
 let recs = [];
-let filterDay = null;
+let filterFrom = null, filterTo = null;
 let tag = TAGS[0].name;
 let firstFit = true;
 let playing = false;
@@ -293,7 +307,10 @@ TAGS.forEach((t, i) => {
 });
 
 /* ---------- 렌더링 ---------- */
-const visible = () => recs.filter(r => !filterDay || dayKey(r.t) === filterDay).sort((a, b) => a.t - b.t);
+const visible = () => recs.filter(r => {
+  const d = dayKey(r.t);
+  return (!filterFrom || d >= filterFrom) && (!filterTo || d <= filterTo);
+}).sort((a, b) => a.t - b.t);
 
 function render(fit) {
   layer.clearLayers(); markerById.clear();
@@ -350,7 +367,7 @@ function render(fit) {
 function fitAll(vis = visible()) {
   if (!vis.length) return;
   if (vis.length === 1) map.setView([vis[0].lat, vis[0].lng], 16);
-  else map.fitBounds(L.latLngBounds(vis.map(r => [r.lat, r.lng])), { paddingTopLeft: [50, 60], paddingBottomRight: [50, 300] });
+  else map.fitBounds(L.latLngBounds(vis.map(r => [r.lat, r.lng])), { paddingTopLeft: [50, 60], paddingBottomRight: [50, 340] });
 }
 
 /* ---------- 기록 ---------- */
@@ -372,7 +389,7 @@ $("stamp").addEventListener("click", () => {
       $("note").value = "";
       navigator.vibrate?.(30);
       toast("기록됨 · " + fmt(rec.t));
-      if (filterDay && filterDay !== dayKey(rec.t)) setFilter(null);
+      if ((filterFrom || filterTo) && !inRange(dayKey(rec.t))) setRange(null, null);
       map.flyTo([rec.lat, rec.lng], Math.max(map.getZoom(), 16), { duration: .8 });
       setMe(rec.lat, rec.lng, rec.acc);
     } catch (e) {
@@ -405,9 +422,33 @@ $("locate").addEventListener("click", () => {
 });
 
 /* ---------- 필터 / 재생 / 목록 ---------- */
-function setFilter(day) { filterDay = day; $("date").value = day || ""; render(true); }
-$("date").addEventListener("change", e => setFilter(e.target.value || null));
-$("bAll").onclick = () => setFilter(null);
+const inRange = d => (!filterFrom || d >= filterFrom) && (!filterTo || d <= filterTo);
+function setRange(from, to) {
+  if (from && to && from > to) { const t = from; from = to; to = t; }
+  filterFrom = from || null; filterTo = to || null;
+  $("dFrom").value = filterFrom || ""; $("dTo").value = filterTo || "";
+  const days = (filterFrom && filterTo) ? Math.round((new Date(filterTo) - new Date(filterFrom)) / 864e5) : -1;
+  const today = dayKey(Date.now());
+  [...$("presets").children].forEach(b => {
+    const d = b.dataset.d;
+    b.classList.toggle("on", d === "all" ? !filterFrom && !filterTo : filterTo === today && days === Number(d));
+  });
+  render(true);
+}
+$("dFrom").addEventListener("change", e => {
+  const f = e.target.value || null;
+  setRange(f, (f && filterTo && f > filterTo) ? f : filterTo);
+});
+$("dTo").addEventListener("change", e => {
+  const t = e.target.value || null;
+  setRange((t && filterFrom && t < filterFrom) ? t : filterFrom, t);
+});
+$("presets").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.d === "all") return setRange(null, null);
+  const n = Number(b.dataset.d), now = Date.now();
+  setRange(dayKey(now - n * 864e5), dayKey(now));
+});
 $("bList").onclick = () => {
   const open = $("sheet").classList.toggle("open");
   $("bList").textContent = open ? "목록 닫기" : "목록 보기";
