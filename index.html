@@ -67,6 +67,16 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 .pop div{font-size:12px;color:var(--sub);margin-top:3px}
 .pop button{margin-top:9px;border:1px solid var(--line);background:#fff;color:#9b2c2c;font-weight:600;border-radius:6px;padding:5px 10px;font-family:inherit;font-size:12.5px;cursor:pointer}
 
+#login{position:fixed;z-index:1000;top:0;left:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(24,40,58,.82);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+#login form{width:100%;max-width:340px;background:#fff;border-radius:14px;padding:22px 18px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+#login h2{margin:0 0 4px;font-size:18px}
+#login p{margin:0 0 14px;font-size:13px;color:var(--sub)}
+#login input{width:100%;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:16px;font-family:inherit;margin-bottom:8px;color:var(--ink)}
+#login input:focus{outline:2px solid var(--navy);outline-offset:-1px;border-color:var(--navy)}
+#login button{width:100%;border:0;border-radius:10px;background:var(--navy);color:#fff;font-family:inherit;font-size:16px;font-weight:700;padding:13px 0;cursor:pointer;margin-top:4px}
+#login button:disabled{opacity:.6}
+#loginErr{color:#9b2c2c;font-size:13px;min-height:18px;margin-top:6px}
+#logout{display:none;pointer-events:auto;border:0;font-family:inherit;cursor:pointer;color:var(--sub)}
 #toast{position:fixed;z-index:900;left:50%;top:calc(env(safe-area-inset-top,0px) + 54px);transform:translate(-50%,-10px);background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;font-size:13.5px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;max-width:90vw;text-align:center}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 .leaflet-top{top:env(safe-area-inset-top,0px)}
@@ -86,6 +96,7 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
   <span class="chip" id="cCount">0건</span>
   <span class="chip" id="cDist">0 km</span>
   <span class="chip" id="mode">로컬 저장</span>
+  <button class="chip" id="logout">로그아웃</button>
 </div>
 <div id="banner"></div>
 <button id="locate" aria-label="내 위치 찾기" title="내 위치 찾기">
@@ -121,6 +132,17 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
   </div>
 </div>
 
+<div id="login">
+  <form id="loginForm">
+    <h2>로그인</h2>
+    <p>비밀번호를 입력하세요.</p>
+    <input id="lUser" type="email" autocomplete="username" tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+    <input id="lPw" type="password" autocomplete="current-password" placeholder="비밀번호" required>
+    <button id="lBtn" type="submit">들어가기</button>
+    <div id="loginErr"></div>
+  </form>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -152,6 +174,9 @@ const firebaseConfig = {
 };
 /* ======================================================== */
 
+/* 로그인용 계정 이메일 (Firebase 콘솔에서 이 이메일로 사용자를 만들고, 앱에서는 비밀번호만 입력합니다).
+   실제 존재하는 주소일 필요는 없습니다. */
+const OWNER_EMAIL = "owner@imhere.app";
 const COLLECTION = "footprints";
 const TAGS = [
   { name: "일반", color: "#334e68" },
@@ -249,29 +274,38 @@ function localStore() {
   };
 }
 
+function showLogin(on) {
+  $("login").style.display = on ? "flex" : "none";
+  $("logout").style.display = on ? "none" : "inline-block";
+}
+
 async function firebaseStore() {
   const V = "10.14.1", base = `https://www.gstatic.com/firebasejs/${V}/`;
-  const [{ initializeApp }, fs, { getAuth, signInAnonymously }] = await Promise.all([
+  const [{ initializeApp }, fs, au] = await Promise.all([
     import(base + "firebase-app.js"),
     import(base + "firebase-firestore.js"),
     import(base + "firebase-auth.js")
   ]);
   const app = initializeApp(firebaseConfig);
   const db = fs.getFirestore(app);
-  try {
-    await Promise.race([
-      signInAnonymously(getAuth(app)),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000))
-    ]);
-  } catch (e) {
-    banner("익명 로그인에 실패했습니다. Firebase 콘솔에서 Authentication의 '익명' 로그인을 켰는지 확인하세요. (" + (e.code || e.message) + ")");
-  }
+  const auth = au.getAuth(app);
   return {
     add: r => fs.addDoc(fs.collection(db, COLLECTION), r),
     remove: id => fs.deleteDoc(fs.doc(db, COLLECTION, id)),
-    watch: cb => fs.onSnapshot(fs.query(fs.collection(db, COLLECTION), fs.orderBy("t")),
-      snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      err => banner("데이터를 불러오지 못했습니다: " + err.code + " — Firestore 규칙과 설정값을 확인하세요."))
+    login: pw => au.signInWithEmailAndPassword(auth, OWNER_EMAIL, pw),
+    logout: () => au.signOut(auth),
+    watch: cb => {
+      let unsub = null;
+      au.onAuthStateChanged(auth, user => {
+        if (unsub) { unsub(); unsub = null; }
+        if (!user || user.isAnonymous) { if (user) au.signOut(auth); cb([]); showLogin(true); return; } /* 예전 익명 세션은 로그아웃 처리 */
+        showLogin(false);
+        $("banner").style.display = "none";
+        unsub = fs.onSnapshot(fs.query(fs.collection(db, COLLECTION), fs.orderBy("t")),
+          snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+          err => banner(err.code === "permission-denied" ? "접근 권한이 없습니다. Firestore 규칙의 이메일이 OWNER_EMAIL과 같은지 확인하세요." : "데이터를 불러오지 못했습니다: " + err.code));
+      });
+    }
   };
 }
 
@@ -488,6 +522,25 @@ $("bPlay").onclick = async () => {
   playing = false; $("bPlay").textContent = "경로 재생";
   fitAll();
 };
+
+/* ---------- 로그인 ---------- */
+$("lUser").value = OWNER_EMAIL;
+$("loginForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!store.login) return;
+  const btn = $("lBtn"); btn.disabled = true; $("loginErr").textContent = "";
+  try { await store.login($("lPw").value); $("lPw").value = ""; }
+  catch (err) {
+    const c = err.code || "";
+    $("loginErr").textContent =
+      /invalid-credential|wrong-password|user-not-found|invalid-email/.test(c) ? "비밀번호가 올바르지 않습니다."
+      : /too-many-requests/.test(c) ? "시도가 너무 많습니다. 잠시 후 다시 시도하세요."
+      : /operation-not-allowed/.test(c) ? "Firebase에서 이메일/비밀번호 로그인이 꺼져 있습니다."
+      : "로그인 실패: " + (c || err.message);
+  }
+  btn.disabled = false;
+});
+$("logout").addEventListener("click", () => { if (store.logout && confirm("로그아웃할까요?")) store.logout(); });
 
 /* ---------- 시작 ---------- */
 store.watch(list => {
