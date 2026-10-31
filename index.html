@@ -22,7 +22,11 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 
 #banner{position:fixed;z-index:700;left:12px;right:12px;top:calc(env(safe-area-inset-top,0px) + 54px);background:#fff8e6;border:1px solid #e8cf94;color:#5c4510;padding:9px 12px;border-radius:8px;font-size:13px;display:none;max-width:560px}
 
-#sheet{position:fixed;z-index:600;left:0;right:0;bottom:0;background:var(--bg);border-radius:14px 14px 0 0;box-shadow:0 -4px 20px rgba(31,41,51,.18);padding:12px 14px calc(env(safe-area-inset-bottom,0px) + 12px);max-width:640px;margin:0 auto}
+#sheet{position:fixed;z-index:600;left:0;right:0;bottom:0;background:var(--bg);border-radius:14px 14px 0 0;box-shadow:0 -4px 20px rgba(31,41,51,.18);padding:0 14px calc(env(safe-area-inset-bottom,0px) + 10px);max-width:640px;margin:0 auto}
+#grip{display:flex;flex-direction:column;align-items:center;gap:5px;width:100%;border:0;background:transparent;padding:9px 0 8px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--sub)}
+#grip .pill{width:38px;height:4px;border-radius:2px;background:#c3cad1}
+#sheetBody{overflow-x:hidden;overflow-y:auto;max-height:82vh;transition:max-height .28s ease,opacity .2s ease}
+#sheet.min #sheetBody{max-height:0;opacity:0;visibility:hidden;transition:max-height .28s ease,opacity .2s ease,visibility 0s .28s}
 #tags{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;scrollbar-width:none}
 #tags::-webkit-scrollbar{display:none}
 #tags button{flex:0 0 auto;display:flex;align-items:center;gap:6px;font:inherit;font-size:13.5px;font-weight:600;color:var(--sub);background:var(--soft);border:1px solid transparent;border-radius:8px;padding:7px 11px;cursor:pointer}
@@ -89,6 +93,8 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 </button>
 
 <div id="sheet">
+  <button id="grip" aria-expanded="true"><span class="pill"></span><span id="gripTxt">입력창 내리기 ▼</span></button>
+  <div id="sheetBody">
   <div id="tags"></div>
   <input id="note" type="text" maxlength="60" placeholder="메모 (선택)">
   <button id="stamp">현재 위치 기록</button>
@@ -112,6 +118,7 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
   </div>
   <ul id="list"></ul>
   <div id="empty">기록이 없습니다. 위 버튼을 눌러 현재 위치를 기록하세요.</div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -367,7 +374,7 @@ function render(fit) {
 function fitAll(vis = visible()) {
   if (!vis.length) return;
   if (vis.length === 1) map.setView([vis[0].lat, vis[0].lng], 16);
-  else map.fitBounds(L.latLngBounds(vis.map(r => [r.lat, r.lng])), { paddingTopLeft: [50, 60], paddingBottomRight: [50, 340] });
+  else map.fitBounds(L.latLngBounds(vis.map(r => [r.lat, r.lng])), { paddingTopLeft: [50, 60], paddingBottomRight: [50, ($("sheet").offsetHeight || 300) + 24] });
 }
 
 /* ---------- 기록 ---------- */
@@ -449,6 +456,16 @@ $("presets").addEventListener("click", e => {
   const n = Number(b.dataset.d), now = Date.now();
   setRange(dayKey(now - n * 864e5), dayKey(now));
 });
+function setMin(min) {
+  $("sheet").classList.toggle("min", min);
+  $("grip").setAttribute("aria-expanded", String(!min));
+  $("gripTxt").textContent = min ? "입력창 올리기 ▲" : "입력창 내리기 ▼";
+  try { localStorage.setItem("sheet-min", min ? "1" : "0"); } catch (e) {}
+  setTimeout(() => map.invalidateSize(), 320);
+}
+$("grip").addEventListener("click", () => setMin(!$("sheet").classList.contains("min")));
+try { if (localStorage.getItem("sheet-min") === "1") setMin(true); } catch (e) {}
+
 $("bList").onclick = () => {
   const open = $("sheet").classList.toggle("open");
   $("bList").textContent = open ? "목록 닫기" : "목록 보기";
