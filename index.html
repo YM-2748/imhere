@@ -49,7 +49,10 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 #bar input{flex:1;min-width:0;cursor:text}
 #bar .row input{padding:8px 6px;font-size:14px}
 #bar select{flex:0 0 96px;font-family:inherit;font-size:13.5px;font-weight:600;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;padding:8px 6px}
-#bar #aCustom{flex:0 0 66px;text-align:center}
+#bar #aCustom{flex:0 0 84px;text-align:center;font-size:16px}
+#bar #aUnit{flex:0 0 64px}
+#autoRow{flex-wrap:wrap}
+#autoRow #aBtn{flex:1 1 110px}
 #autoNote{font-size:12px;color:var(--sub);margin-top:6px;line-height:1.45}
 #aBtn.on{background:#fdf3e1;border-color:var(--amber);color:#7a4f10}
 
@@ -81,6 +84,9 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 #login button:disabled{opacity:.6}
 #loginErr{color:#9b2c2c;font-size:13px;min-height:18px;margin-top:6px}
 #logout{display:none;pointer-events:auto;border:0;font-family:inherit;cursor:pointer;color:var(--sub)}
+#legend{position:fixed;z-index:500;left:12px;top:calc(env(safe-area-inset-top,0px) + 52px);display:none;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;box-shadow:0 1px 4px rgba(31,41,51,.2);font-size:11.5px;font-weight:600;color:var(--sub);font-variant-numeric:tabular-nums;pointer-events:none}
+#legend i{display:block;width:64px;height:8px;border-radius:4px;background:linear-gradient(90deg,#2b9a5f,#2a7f93 50%,#1b2d4d)}
+#legend b{color:var(--ink);font-weight:700}
 #toast{position:fixed;z-index:900;left:50%;top:calc(env(safe-area-inset-top,0px) + 54px);transform:translate(-50%,-10px);background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;font-size:13.5px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;max-width:90vw;text-align:center}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 .leaflet-top{top:env(safe-area-inset-top,0px)}
@@ -103,6 +109,7 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
   <button class="chip" id="logout">로그아웃</button>
   <span class="chip" id="cAuto" style="display:none"></span>
 </div>
+<div id="legend"><span>최근</span><b id="lgNew"></b><i></i><b id="lgOld"></b><span>이전</span></div>
 <div id="banner"></div>
 <button id="locate" aria-label="내 위치 찾기" title="내 위치 찾기">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4"/></svg>
@@ -120,16 +127,12 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
       <button id="bList">목록 보기</button>
       <button id="bPlay" class="p">경로 재생</button>
     </div>
-    <div class="row">
-      <select id="aInt" aria-label="자동 기록 간격">
-        <option value="1">1분</option><option value="3">3분</option><option value="5">5분</option>
-        <option value="10">10분</option><option value="15">15분</option><option value="30">30분</option>
-        <option value="60">1시간</option><option value="custom">직접 입력</option>
-      </select>
-      <input id="aCustom" type="number" min="1" max="720" inputmode="numeric" placeholder="분">
-      <button id="aBtn">자동 기록 시작</button>
+    <div class="row" id="autoRow">
+      <input id="aCustom" type="number" min="1" step="1" inputmode="numeric" value="5" aria-label="자동 기록 간격 숫자" placeholder="간격">
+      <select id="aUnit" aria-label="단위"><option value="1">초</option><option value="60" selected>분</option></select>
+      <button id="aBtn">자동 시작</button>
     </div>
-    <div id="autoNote">자동 기록은 이 화면이 켜져 있는 동안에만 동작합니다. 이전 위치와 거의 같으면 저장하지 않습니다.</div>
+    <div id="autoNote">자동 기록은 이 화면이 켜져 있는 동안에만 동작합니다. 이전 위치와 거의 같으면 저장하지 않습니다. 초 단위는 배터리와 저장 용량을 많이 쓰니 필요할 때만 사용하세요 (최소 5초).</div>
     <div class="row">
       <input id="dFrom" type="date" aria-label="시작일">
       <span class="tilde">~</span>
@@ -198,6 +201,14 @@ const TAGS = [
   { name: "업무", color: "#5b4b8a" },
   { name: "식사", color: "#8a6d3b" }
 ];
+/* 기록 시각에 따른 색: 최근 = 초록 → 오래됨 = 짙은 네이비 */
+const STOPS = [[43, 154, 95], [42, 127, 147], [27, 45, 77]];
+function ageColor(f) {
+  f = Math.min(1, Math.max(0, f));
+  const x = f * (STOPS.length - 1), i = Math.min(STOPS.length - 2, Math.floor(x)), t = x - i;
+  const c = STOPS[i].map((v, k) => Math.round(v + (STOPS[i + 1][k] - v) * t));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
 const tagColor = n => (TAGS.find(t => t.name === n) || TAGS[0]).color;
 const $ = id => document.getElementById(id);
 const pad = n => String(n).padStart(2, "0");
@@ -372,15 +383,28 @@ function render(fit) {
   layer.clearLayers(); markerById.clear();
   const vis = visible();
 
-  if (vis.length > 1) {
-    L.polyline(vis.map(r => [r.lat, r.lng]), { color: "#243b53", weight: 3, opacity: .55, dashArray: "1 8", lineCap: "round" }).addTo(layer);
+  const tmin = vis.length ? vis[0].t : 0, tmax = vis.length ? vis[vis.length - 1].t : 0;
+  const colorFor = r => ageColor(tmax === tmin ? 0 : (tmax - r.t) / (tmax - tmin));
+
+  for (let i = 1; i < vis.length; i++) {
+    L.polyline([[vis[i - 1].lat, vis[i - 1].lng], [vis[i].lat, vis[i].lng]],
+      { color: colorFor(vis[i]), weight: 4, opacity: .75, dashArray: "1 8", lineCap: "round" }).addTo(layer);
   }
+
+  /* 범례 */
+  const lg = $("legend");
+  if (vis.length > 1) {
+    const same = dayKey(tmin) === dayKey(tmax);
+    const f = t => { const d = new Date(t); return same ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : `${d.getMonth() + 1}.${d.getDate()}`; };
+    $("lgNew").textContent = f(tmax); $("lgOld").textContent = f(tmin);
+    lg.style.display = "flex";
+  } else lg.style.display = "none";
 
   vis.forEach((r, i) => {
     const last = i === vis.length - 1, size = last ? 34 : 28;
     const icon = L.divIcon({
       className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2],
-      html: `<div class="pin${last ? " last" : ""}" style="background:${tagColor(r.tag)}">${i + 1}</div>`
+      html: `<div class="pin${last ? " last" : ""}" style="background:${colorFor(r)}">${i + 1}</div>`
     });
     const m = L.marker([r.lat, r.lng], { icon }).addTo(layer);
     m.bindPopup(() => {
@@ -407,7 +431,7 @@ function render(fit) {
   const ul = $("list"); ul.innerHTML = "";
   vis.map((r, i) => ({ r, i })).reverse().forEach(({ r, i }) => {
     const li = document.createElement("li");
-    const n = document.createElement("span"); n.className = "n"; n.textContent = i + 1; n.style.background = tagColor(r.tag);
+    const n = document.createElement("span"); n.className = "n"; n.textContent = i + 1; n.style.background = colorFor(r);
     const tx = document.createElement("div"); tx.className = "tx";
     const b = document.createElement("b"); b.textContent = r.note || "기록 " + (i + 1);
     const s = document.createElement("span"); s.textContent = fmt(r.t) + " · " + (r.tag || "일반");
@@ -540,23 +564,27 @@ $("bPlay").onclick = async () => {
 };
 
 /* ---------- 자동 기록 (화면이 켜져 있는 동안) ---------- */
-const DUP_M = 30;  /* 이전 기록과 이 거리(m) 안이면 저장하지 않음 */
+const DUP_M = 30;     /* 이전 기록과 이 거리(m) 안이면 저장하지 않음 */
+const MIN_SEC = 5, MAX_SEC = 12 * 3600;
 let autoOn = false, autoTimer = null, wakeLock = null, lastAutoTs = 0, lastPos = null, busyAuto = false;
 
 try {
-  const v = localStorage.getItem("auto-min"), c = localStorage.getItem("auto-custom");
-  if (v) $("aInt").value = v;
+  const c = localStorage.getItem("auto-num"), u = localStorage.getItem("auto-unit2");
   if (c) $("aCustom").value = c;
+  if (u) $("aUnit").value = u;
 } catch (e) {}
-if (!$("aInt").value) $("aInt").value = "5";
-const syncCustom = () => { $("aCustom").style.display = $("aInt").value === "custom" ? "block" : "none"; };
-syncCustom();
 
-const autoMin = () => {
-  if ($("aInt").value === "custom") return Math.min(720, Math.max(1, Math.round(Number($("aCustom").value) || 10)));
-  return Number($("aInt").value) || 5;
+const autoSec = () => {
+  const sec = Math.round((Number($("aCustom").value) || 5) * Number($("aUnit").value));
+  return Math.min(MAX_SEC, Math.max(MIN_SEC, sec));
 };
-const hhmm = t => new Date(t).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
+const fmtInt = sec => {
+  if (sec < 60) return sec + "초";
+  if (sec % 3600 === 0) return (sec / 3600) + "시간";
+  if (sec % 60 === 0) return (sec / 60) + "분";
+  return Math.floor(sec / 60) + "분 " + (sec % 60) + "초";
+};
+const hhmm = t => new Date(t).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit", second: "2-digit" });
 function autoStatus(txt) { const c = $("cAuto"); c.style.display = autoOn ? "inline-block" : "none"; c.textContent = txt; }
 function latest() { let m = lastPos; for (const r of recs) if (!m || r.t > m.t) m = r; return m; }
 async function takeWake() {
@@ -573,54 +601,60 @@ function autoOnce() {
     setMe(here.lat, here.lng, here.acc);
     const prev = latest();
     const limit = Math.max(DUP_M, Math.min(here.acc, 100));
+    const label = `자동 ${fmtInt(autoSec())} · ${hhmm(now)}`;
     if (prev && km(prev, here) * 1000 < limit) {
-      autoStatus(`자동 ${autoMin()}분 · ${hhmm(now)} 이동 없음`);
+      autoStatus(label + " 이동 없음");
     } else {
       try {
         await store.add({ lat: here.lat, lng: here.lng, acc: here.acc, t: now, tag: "일반", note: "자동" });
         lastPos = here;
-        autoStatus(`자동 ${autoMin()}분 · ${hhmm(now)} 기록`);
+        autoStatus(label + " 기록");
       } catch (e) { autoStatus("자동 기록 저장 실패"); toast("저장 실패: " + (e.code || e.message)); }
     }
     busyAuto = false;
   }, err => {
     busyAuto = false;
     if (err.code === 1) { stopAuto(); toast("위치 권한이 필요합니다. 브라우저 설정에서 허용해 주세요."); return; }
-    autoStatus(`자동 ${autoMin()}분 · 위치 확인 실패`);
+    autoStatus(`자동 ${fmtInt(autoSec())} · 위치 확인 실패`);
   }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
 }
 
 function armTimer() {
   clearInterval(autoTimer);
-  autoTimer = setInterval(() => { if (!document.hidden) autoOnce(); }, autoMin() * 60000);
+  autoTimer = setInterval(() => { if (!document.hidden) autoOnce(); }, autoSec() * 1000);
 }
 async function startAuto() {
   if (!navigator.geolocation) return toast("이 브라우저는 위치 기능을 지원하지 않습니다");
   if (!window.isSecureContext) return toast("위치 기능은 https 주소에서만 사용할 수 있습니다");
-  if ($("aInt").value === "custom" && !($("aCustom").value > 0)) return toast("간격(분)을 입력해 주세요");
-  autoOn = true; $("aBtn").textContent = "자동 기록 중지"; $("aBtn").classList.add("on");
-  autoStatus(`자동 ${autoMin()}분 · 시작`);
+  const raw = Math.round(Number($("aCustom").value) * Number($("aUnit").value));
+  if (!(raw > 0)) return toast("간격 숫자를 입력해 주세요");
+  const s = autoSec();
+  if (s !== raw) toast("간격은 5초 ~ 12시간 사이로 조정되었습니다 (" + fmtInt(s) + ")");
+  autoOn = true; $("aBtn").textContent = "자동 중지"; $("aBtn").classList.add("on");
+  autoStatus(`자동 ${fmtInt(s)} · 시작`);
   await takeWake(); armTimer(); autoOnce();
 }
 function stopAuto() {
   autoOn = false; clearInterval(autoTimer);
   try { wakeLock && wakeLock.release(); } catch (e) {}
   wakeLock = null;
-  $("aBtn").textContent = "자동 기록 시작"; $("aBtn").classList.remove("on");
+  $("aBtn").textContent = "자동 시작"; $("aBtn").classList.remove("on");
   autoStatus("");
 }
 function intervalChanged() {
-  try { localStorage.setItem("auto-min", $("aInt").value); localStorage.setItem("auto-custom", $("aCustom").value); } catch (e) {}
-  syncCustom();
-  if (autoOn) { armTimer(); autoStatus(`자동 ${autoMin()}분 · 간격 변경`); }
+  try {
+    localStorage.setItem("auto-num", $("aCustom").value);
+    localStorage.setItem("auto-unit2", $("aUnit").value);
+  } catch (e) {}
+  if (autoOn) { armTimer(); autoStatus(`자동 ${fmtInt(autoSec())} · 간격 변경`); }
 }
 $("aBtn").addEventListener("click", () => { autoOn ? stopAuto() : startAuto(); });
-$("aInt").addEventListener("change", intervalChanged);
 $("aCustom").addEventListener("change", intervalChanged);
+$("aUnit").addEventListener("change", intervalChanged);
 document.addEventListener("visibilitychange", async () => {
   if (!autoOn || document.hidden) return;
   await takeWake();
-  if (Date.now() - lastAutoTs >= autoMin() * 60000) autoOnce();
+  if (Date.now() - lastAutoTs >= autoSec() * 1000) autoOnce();
 });
 
 /* ---------- 로그인 ---------- */
