@@ -65,7 +65,7 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 #list .tx span{font-size:12px;color:var(--sub)}
 #empty{display:none;text-align:center;font-size:13.5px;color:var(--sub);padding:12px 0 2px}
 
-.pin{width:28px;height:28px;border-radius:50%;border:2px solid #fff;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 5px rgba(31,41,51,.5)}
+.pin{width:28px;height:28px;border-radius:50%;border:2px solid #fff;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 1px rgba(31,41,51,.55),0 1px 5px rgba(31,41,51,.45)}
 .pin.last{width:34px;height:34px;font-size:14px;box-shadow:0 0 0 3px rgba(36,59,83,.35),0 1px 5px rgba(31,41,51,.5)}
 .me{width:16px;height:16px;border-radius:50%;background:#2b6cb0;border:3px solid #fff;box-shadow:0 0 0 0 rgba(43,108,176,.5);animation:ping 1.8s infinite}
 @keyframes ping{to{box-shadow:0 0 0 20px rgba(43,108,176,0)}}
@@ -85,7 +85,7 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 #loginErr{color:#9b2c2c;font-size:13px;min-height:18px;margin-top:6px}
 #logout{display:none;pointer-events:auto;border:0;font-family:inherit;cursor:pointer;color:var(--sub)}
 #legend{position:fixed;z-index:500;left:12px;top:calc(env(safe-area-inset-top,0px) + 52px);display:none;align-items:center;gap:6px;background:#fff;padding:6px 10px;border-radius:8px;box-shadow:0 1px 4px rgba(31,41,51,.2);font-size:11.5px;font-weight:600;color:var(--sub);font-variant-numeric:tabular-nums;pointer-events:none}
-#legend i{display:block;width:64px;height:8px;border-radius:4px;background:linear-gradient(90deg,#8fe646,#2a7f93 50%,#1b2d4d)}
+#legend i{display:block;width:84px;height:8px;border-radius:4px;background:linear-gradient(90deg,#fde725,#5ec962 25%,#21918c 50%,#3b528b 75%,#440154)}
 #legend b{color:var(--ink);font-weight:700}
 #toast{position:fixed;z-index:900;left:50%;top:calc(env(safe-area-inset-top,0px) + 54px);transform:translate(-50%,-10px);background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;font-size:13.5px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;max-width:90vw;text-align:center}
 #toast.show{opacity:1;transform:translate(-50%,0)}
@@ -201,8 +201,8 @@ const TAGS = [
   { name: "업무", color: "#5b4b8a" },
   { name: "식사", color: "#8a6d3b" }
 ];
-/* 기록 시각에 따른 색: 최근 = 초록 → 오래됨 = 짙은 네이비 */
-const STOPS = [[143, 230, 70], [42, 127, 147], [27, 45, 77]];
+/* 기록 순서에 따른 색 (viridis 계열): 최근 = 노랑 → 연두 → 청록 → 파랑 → 오래됨 = 진한 보라 */
+const STOPS = [[253, 231, 37], [94, 201, 98], [33, 145, 140], [59, 82, 139], [68, 1, 84]];
 function ageRGB(f) {
   f = Math.min(1, Math.max(0, f));
   const x = f * (STOPS.length - 1), i = Math.min(STOPS.length - 2, Math.floor(x)), t = x - i;
@@ -386,7 +386,8 @@ function render(fit) {
   const vis = visible();
 
   const tmin = vis.length ? vis[0].t : 0, tmax = vis.length ? vis[vis.length - 1].t : 0;
-  const fOf = r => tmax === tmin ? 0 : (tmax - r.t) / (tmax - tmin);
+  const rank = new Map(vis.map((r, i) => [r, i]));
+  const fOf = r => vis.length < 2 ? 0 : 1 - rank.get(r) / (vis.length - 1);  /* 0 = 가장 최근, 1 = 가장 오래됨 */
   const colorFor = r => ageColor(fOf(r)), textFor = r => ageText(fOf(r));
 
   for (let i = 1; i < vis.length; i++) {
@@ -454,31 +455,37 @@ function fitAll(vis = visible()) {
 }
 
 /* ---------- 기록 ---------- */
-$("stamp").addEventListener("click", () => {
+async function commit(rec, real) {
+  try {
+    await store.add(rec);
+    lastPos = rec;
+    $("note").value = "";
+    navigator.vibrate?.(30);
+    toast("기록됨 · " + fmt(rec.t));
+    if ((filterFrom || filterTo) && !inRange(dayKey(rec.t))) setRange(null, null);
+    map.flyTo([rec.lat, rec.lng], Math.max(map.getZoom(), 16), { duration: .8 });
+    if (real) setMe(rec.lat, rec.lng, rec.acc);
+    return true;
+  } catch (e) {
+    toast("저장 실패: " + (e.code || e.message));
+    return false;
+  }
+}
+
+$("stamp").addEventListener("click", async () => {
+  const btn = $("stamp");
+
   if (!navigator.geolocation) return toast("이 브라우저는 위치 기능을 지원하지 않습니다");
   if (!window.isSecureContext) return toast("위치 기능은 https 주소에서만 사용할 수 있습니다");
-  const btn = $("stamp");
   btn.classList.add("busy"); btn.textContent = "위치 확인 중…";
   const done = () => { btn.classList.remove("busy"); btn.textContent = "현재 위치 기록"; };
 
   navigator.geolocation.getCurrentPosition(async pos => {
-    const rec = {
+    await commit({
       lat: pos.coords.latitude, lng: pos.coords.longitude,
       acc: Math.round(pos.coords.accuracy || 0),
       t: Date.now(), tag, note: $("note").value.trim()
-    };
-    try {
-      await store.add(rec);
-      lastPos = rec;
-      $("note").value = "";
-      navigator.vibrate?.(30);
-      toast("기록됨 · " + fmt(rec.t));
-      if ((filterFrom || filterTo) && !inRange(dayKey(rec.t))) setRange(null, null);
-      map.flyTo([rec.lat, rec.lng], Math.max(map.getZoom(), 16), { duration: .8 });
-      setMe(rec.lat, rec.lng, rec.acc);
-    } catch (e) {
-      toast("저장 실패: " + (e.code || e.message));
-    }
+    }, true);
     done();
   }, err => {
     toast(err.code === 1 ? "위치 권한이 필요합니다. 브라우저 설정에서 허용해 주세요."
