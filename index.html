@@ -67,6 +67,19 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 
 .pin{width:28px;height:28px;border-radius:50%;border:2px solid #fff;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 1px rgba(31,41,51,.55),0 1px 5px rgba(31,41,51,.45)}
 .pin.last{width:34px;height:34px;font-size:14px;box-shadow:0 0 0 3px rgba(36,59,83,.35),0 1px 5px rgba(31,41,51,.5)}
+.pin.sel{box-shadow:0 0 0 3px #fff,0 0 0 6px #c53030}
+#selBar{display:none;align-items:center;gap:6px;padding:0 0 8px}
+#sheet.selecting #selBar{display:flex}
+#selCount{flex:1;font-size:13.5px;font-weight:700;color:#9b2c2c;font-variant-numeric:tabular-nums}
+#selBar button{font-family:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;padding:7px 10px;cursor:pointer}
+#selBar button.danger{background:#c53030;border-color:#c53030;color:#fff}
+#selBar button:disabled{opacity:.5}
+#bSel.on{background:#fdecec;border-color:#c53030;color:#9b2c2c}
+#list .cb{display:none;flex:0 0 auto;width:20px;height:20px;border:2px solid #9aa5b1;border-radius:5px;align-items:center;justify-content:center;color:#fff;font-size:13px;line-height:1;font-weight:700}
+#sheet.selecting #list .cb{display:flex}
+#list li.sel{background:#fdf2f2}
+#list li.sel .cb{background:#c53030;border-color:#c53030}
+#list li.sel .cb::after{content:"✓"}
 .me{width:16px;height:16px;border-radius:50%;background:#2b6cb0;border:3px solid #fff;box-shadow:0 0 0 0 rgba(43,108,176,.5);animation:ping 1.8s infinite}
 @keyframes ping{to{box-shadow:0 0 0 20px rgba(43,108,176,0)}}
 .leaflet-popup-content{font-family:inherit;margin:12px 14px}
@@ -117,6 +130,12 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
 
 <div id="sheet">
   <button id="grip" aria-expanded="true"><span class="pill"></span><span id="gripTxt">입력창 내리기 ▼</span></button>
+  <div id="selBar">
+    <span id="selCount">0건 선택</span>
+    <button id="selAll">전체 선택</button>
+    <button id="selDel" class="danger">삭제</button>
+    <button id="selCancel">취소</button>
+  </div>
   <div id="sheetBody">
   <div id="tags"></div>
   <input id="note" type="text" maxlength="60" placeholder="메모 (선택)">
@@ -125,6 +144,7 @@ html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"App
   <div id="bar">
     <div class="row">
       <button id="bList">목록 보기</button>
+      <button id="bSel">선택 삭제</button>
       <button id="bPlay" class="p">경로 재생</button>
     </div>
     <div class="row" id="autoRow">
@@ -381,8 +401,12 @@ const visible = () => recs.filter(r => {
   return (!filterFrom || d >= filterFrom) && (!filterTo || d <= filterTo);
 }).sort((a, b) => a.t - b.t);
 
+let selecting = false;
+const selected = new Set();
+const liById = new Map();
+
 function render(fit) {
-  layer.clearLayers(); markerById.clear();
+  layer.clearLayers(); markerById.clear(); liById.clear();
   const vis = visible();
 
   const tmin = vis.length ? vis[0].t : 0, tmax = vis.length ? vis[vis.length - 1].t : 0;
@@ -424,6 +448,7 @@ function render(fit) {
       box.append(b, d, btn);
       return box;
     });
+    m.on("click", () => { if (selecting) { m.closePopup(); toggleSel(r.id); } });
     markerById.set(r.id, m);
   });
 
@@ -435,16 +460,19 @@ function render(fit) {
   const ul = $("list"); ul.innerHTML = "";
   vis.map((r, i) => ({ r, i })).reverse().forEach(({ r, i }) => {
     const li = document.createElement("li");
+    const cb = document.createElement("span"); cb.className = "cb";
     const n = document.createElement("span"); n.className = "n"; n.textContent = i + 1; n.style.background = colorFor(r); n.style.color = textFor(r);
     const tx = document.createElement("div"); tx.className = "tx";
     const b = document.createElement("b"); b.textContent = r.note || "기록 " + (i + 1);
     const s = document.createElement("span"); s.textContent = fmt(r.t) + " · " + (r.tag || "일반");
-    tx.append(b, s); li.append(n, tx);
-    li.onclick = () => { map.flyTo([r.lat, r.lng], 17, { duration: .8 }); setTimeout(() => markerById.get(r.id)?.openPopup(), 850); };
+    tx.append(b, s); li.append(cb, n, tx);
+    liById.set(r.id, li);
+    li.onclick = () => { if (selecting) return toggleSel(r.id); map.flyTo([r.lat, r.lng], 17, { duration: .8 }); setTimeout(() => markerById.get(r.id)?.openPopup(), 850); };
     ul.appendChild(li);
   });
   $("empty").style.display = vis.length ? "none" : "block";
 
+  applySel();
   if (fit && vis.length) fitAll(vis);
 }
 
@@ -512,9 +540,58 @@ $("locate").addEventListener("click", () => {
   }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
 });
 
+/* ---------- 선택 삭제 ---------- */
+function applySel() {
+  markerById.forEach((m, id) => {
+    const pin = m.getElement() && m.getElement().querySelector(".pin");
+    if (pin) pin.classList.toggle("sel", selected.has(id));
+  });
+  liById.forEach((li, id) => li.classList.toggle("sel", selected.has(id)));
+  const vis = visible(), allSel = vis.length > 0 && vis.every(r => selected.has(r.id));
+  $("selCount").textContent = selected.size + "건 선택";
+  $("selDel").disabled = selected.size === 0;
+  $("selAll").textContent = allSel ? "전체 해제" : "전체 선택";
+}
+function toggleSel(id) {
+  selected.has(id) ? selected.delete(id) : selected.add(id);
+  applySel();
+}
+function setSelecting(on) {
+  selecting = on;
+  if (!on) selected.clear();
+  $("sheet").classList.toggle("selecting", on);
+  $("bSel").classList.toggle("on", on);
+  $("bSel").textContent = on ? "선택 종료" : "선택 삭제";
+  if (on) {
+    map.closePopup();
+    $("sheet").classList.add("open"); $("bList").textContent = "목록 닫기";
+    toast("삭제할 기록을 눌러 선택하세요. 지도의 핀도 누르면 선택돼요.");
+  }
+  applySel();
+}
+$("bSel").addEventListener("click", () => setSelecting(!selecting));
+$("selCancel").addEventListener("click", () => setSelecting(false));
+$("selAll").addEventListener("click", () => {
+  const ids = visible().map(r => r.id);
+  const allSel = ids.length > 0 && ids.every(id => selected.has(id));
+  ids.forEach(id => allSel ? selected.delete(id) : selected.add(id));
+  applySel();
+});
+$("selDel").addEventListener("click", async () => {
+  const ids = [...selected];
+  if (!ids.length) return toast("삭제할 기록을 선택하세요");
+  if (!confirm(`선택한 ${ids.length}건을 삭제할까요?\n삭제한 기록은 되돌릴 수 없습니다.`)) return;
+  $("selDel").disabled = true;
+  const res = await Promise.allSettled(ids.map(id => store.remove(id)));
+  const fail = res.filter(x => x.status === "rejected").length;
+  toast(fail ? `${ids.length - fail}건 삭제, ${fail}건 실패` : `${ids.length}건을 삭제했습니다`);
+  setSelecting(false);
+});
+
 /* ---------- 필터 / 재생 / 목록 ---------- */
 const inRange = d => (!filterFrom || d >= filterFrom) && (!filterTo || d <= filterTo);
 function setRange(from, to) {
+  selected.clear();
   if (from && to && from > to) { const t = from; from = to; to = t; }
   filterFrom = from || null; filterTo = to || null;
   $("dFrom").value = filterFrom || ""; $("dTo").value = filterTo || "";
@@ -689,6 +766,7 @@ $("logout").addEventListener("click", () => { if (store.logout && confirm("로�
 /* ---------- 시작 ---------- */
 store.watch(list => {
   recs = list;
+  for (const id of [...selected]) if (!list.some(r => r.id === id)) selected.delete(id);
   render(firstFit);
   if (list.length) firstFit = false;
 });
